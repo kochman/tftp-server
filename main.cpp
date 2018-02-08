@@ -13,12 +13,22 @@ void logmsg(std::string msg) {
     if (LOG) std::cout << msg << std::endl;
 }
 
+void concatstr(char* first, char* second) {
+    for (int i = 0; i < strlen(second); ++i) {
+        first[i] = second[i];
+    }
+}
+
 // handle RRQ
 void rrq(struct sockaddr_in* cliaddr, std::string filename) {
     logmsg("RRQ client port " + std::to_string(cliaddr->sin_port) + " filename " + filename);
 
     // set up another socket for this transfer
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*) &tv, sizeof(tv));
     struct sockaddr_in servaddr;
     memset(&servaddr, 0, sizeof(servaddr));
     servaddr.sin_family      = AF_INET;
@@ -30,6 +40,8 @@ void rrq(struct sockaddr_in* cliaddr, std::string filename) {
         exit(EXIT_FAILURE);
     }
 
+    socklen_t cliaddrlen = sizeof(*cliaddr);
+
     // https://stackoverflow.com/a/4047837
     if (getsockname(sockfd, (struct sockaddr *)&servaddr, &servaddrlen) == -1) {
         perror("getsockname");
@@ -39,12 +51,25 @@ void rrq(struct sockaddr_in* cliaddr, std::string filename) {
     // try to open the file
     FILE* file = fopen(filename.c_str(), "r");
     if (file == NULL) {
-        // TODO: reply with error if it doesn't exist
-        perror("fopen");
-        exit(EXIT_FAILURE);
-    }
+        // reply with error if it doesn't exist
+        logmsg("file not found");
+        // char msg[128];
+        char msg[32] = { '\0' };
+        msg[0] = 0; // ERROR opcode
+        msg[1] = 5;
+        msg[2] = 0; // File not found error value
+        msg[3] = 1;
 
-    socklen_t cliaddrlen = sizeof(*cliaddr);
+        char humanmsg[] = "File not found.";
+        concatstr(&(msg[4]), humanmsg);
+
+        int sendn = sendto(sockfd, &msg, 4 + strlen(humanmsg) + 1, 0, (struct sockaddr *) cliaddr, cliaddrlen);
+        if (sendn == -1) {
+            perror("sendto");
+            exit(EXIT_FAILURE);
+        }
+        return;
+    }
 
     short int blocknum = 0;
     // start sending data
@@ -63,17 +88,32 @@ void rrq(struct sockaddr_in* cliaddr, std::string filename) {
         msg[2] = blocknum >> 8;
         msg[3] = blocknum;
 
-        logmsg(std::to_string(msg[2]) + std::to_string(msg[3]));
-
         for (int i = 0; i < bufn; ++i) {
             msg[4+i] = buffer[i];
         }
 
-        int sendn = sendto(sockfd, &msg, msglen, 0, (struct sockaddr *) cliaddr, cliaddrlen);
-        if (sendn == -1) {
-            perror("sendto");
-            exit(EXIT_FAILURE);
+        // loop until we receive an ack or time out
+        while (true) {
+            int sendn = sendto(sockfd, &msg, msglen, 0, (struct sockaddr *) cliaddr, cliaddrlen);
+            if (sendn == -1) {
+                perror("sendto");
+                exit(EXIT_FAILURE);
+            }
+
+            // wait for ack
+            char ackbuffer[4];
+            int ackn = recvfrom(sockfd, &ackbuffer, 4, 0, (struct sockaddr *) cliaddr, &cliaddrlen);
+            if (ackn == -1) {
+                perror("recvfrom");
+                exit(EXIT_FAILURE);
+            } else if (ackn < 4) {
+                // 4 is from 2-byte opcode plus 2-byte block number
+                logmsg("expected 4 bytes, got " + std::to_string(ackn));
+                exit(EXIT_FAILURE);
+            }
+            break;
         }
+
 
         if (bufn < 512) {
             // end of file
