@@ -7,26 +7,33 @@
 #include <unistd.h>
 
 bool LOG = false;
+unsigned int BUFFER_SIZE = 4096; // BIG ASSUMPTION: no datagram is larger than this
 
 void logmsg(std::string msg) {
     if (LOG) std::cout << msg << std::endl;
+}
+
+// handle RRQ
+void rrq(int cliport, std::string filename) {
+    logmsg("RRQ client port " + std::to_string(cliport) + " filename " + filename);
 }
 
 void handlepacket(int sockfd) {
     struct sockaddr_in cliaddr;
     memset(&cliaddr, 0, sizeof(cliaddr));
     socklen_t cliaddrlen = sizeof(cliaddr);
-    char buffer[2];
-    int n = recvfrom(sockfd, &buffer, 2, 0, (struct sockaddr *) &cliaddr, &cliaddrlen);
+    char buffer[BUFFER_SIZE];
+    int n = recvfrom(sockfd, &buffer, BUFFER_SIZE, 0, (struct sockaddr *) &cliaddr, &cliaddrlen);
     if (n == -1) {
         perror("recvfrom");
         return;
-    } else if (n != 2) {
-        logmsg("expected 2 bytes, got " + std::to_string(n));
+    } else if (n < 4) {
+        // 4 is from 2-byte opcode plus at least one byte filename and NULL char
+        logmsg("expected at least 4 bytes, got " + std::to_string(n));
         return;
+    } else if (n == BUFFER_SIZE) {
+        logmsg("buffer full");
     }
-
-    int opcode = (buffer[0] << 8) | buffer[1];
 
     pid_t pid = fork();
     if (pid == -1) {
@@ -35,14 +42,27 @@ void handlepacket(int sockfd) {
     }
     // exit parent, child does all the work
     if (pid > 0) {
-        logmsg("parent exiting");
+        logmsg("parent returning");
         return;
     }
     logmsg("child handling packet");
 
+    int opcode = (buffer[0] << 8) | buffer[1];
+    int cliport = ntohs(cliaddr.sin_port);
+
+    // read filename out of buffer
+    std::string filename;
+    for (unsigned int i = 2; i < BUFFER_SIZE; ++i) {
+        char c = buffer[i];
+        if (c == '\0') {
+            break;
+        }
+        filename += c;
+    }
+
     if (opcode == 1) {
         logmsg("RRQ received");
-        // rrq();
+        rrq(cliport, filename);
     } else if (opcode == 2) {
         logmsg("WRQ received");
         // wrq();
