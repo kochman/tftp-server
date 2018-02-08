@@ -14,8 +14,74 @@ void logmsg(std::string msg) {
 }
 
 // handle RRQ
-void rrq(int cliport, std::string filename) {
-    logmsg("RRQ client port " + std::to_string(cliport) + " filename " + filename);
+void rrq(struct sockaddr_in* cliaddr, std::string filename) {
+    logmsg("RRQ client port " + std::to_string(cliaddr->sin_port) + " filename " + filename);
+
+    // set up another socket for this transfer
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    struct sockaddr_in servaddr;
+    memset(&servaddr, 0, sizeof(servaddr));
+    servaddr.sin_family      = AF_INET;
+    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    servaddr.sin_port        = htons(0); // any port; we'll read it later
+    socklen_t servaddrlen = sizeof(servaddr);
+    if (bind(sockfd, (struct sockaddr *) &servaddr, servaddrlen) == -1) {
+        perror("bind");
+        exit(EXIT_FAILURE);
+    }
+
+    // https://stackoverflow.com/a/4047837
+    if (getsockname(sockfd, (struct sockaddr *)&servaddr, &servaddrlen) == -1) {
+        perror("getsockname");
+        exit(EXIT_FAILURE);
+    }
+
+    // try to open the file
+    FILE* file = fopen(filename.c_str(), "r");
+    if (file == NULL) {
+        // TODO: reply with error if it doesn't exist
+        perror("fopen");
+        exit(EXIT_FAILURE);
+    }
+
+    socklen_t cliaddrlen = sizeof(*cliaddr);
+
+    short int blocknum = 0;
+    // start sending data
+    while (true) {
+        // read data
+        char buffer[512];
+        int bufn = fread(buffer, sizeof(char), 512, file);
+
+        // create message
+        ++blocknum;
+        int msglen = 2 + 2 + bufn; // opcode + block number + bytes read
+        char msg[msglen];
+
+        msg[0] = 0; // DATA opcode
+        msg[1] = 3; // DATA opcode
+        msg[2] = blocknum >> 8;
+        msg[3] = blocknum;
+
+        logmsg(std::to_string(msg[2]) + std::to_string(msg[3]));
+
+        for (int i = 0; i < bufn; ++i) {
+            msg[4+i] = buffer[i];
+        }
+
+        int sendn = sendto(sockfd, &msg, msglen, 0, (struct sockaddr *) cliaddr, cliaddrlen);
+        if (sendn == -1) {
+            perror("sendto");
+            exit(EXIT_FAILURE);
+        }
+
+        if (bufn < 512) {
+            // end of file
+            break;
+        }
+    }
+
+    fclose(file);
 }
 
 void handlepacket(int sockfd) {
@@ -48,7 +114,6 @@ void handlepacket(int sockfd) {
     logmsg("child handling packet");
 
     int opcode = (buffer[0] << 8) | buffer[1];
-    int cliport = ntohs(cliaddr.sin_port);
 
     // read filename out of buffer
     std::string filename;
@@ -62,7 +127,7 @@ void handlepacket(int sockfd) {
 
     if (opcode == 1) {
         logmsg("RRQ received");
-        rrq(cliport, filename);
+        rrq(&cliaddr, filename);
     } else if (opcode == 2) {
         logmsg("WRQ received");
         // wrq();
@@ -77,7 +142,8 @@ void serve() {
     memset(&servaddr, 0, sizeof(servaddr));
     servaddr.sin_family      = AF_INET;
     servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    servaddr.sin_port        = htons(0); // any port; we'll read it later
+    // servaddr.sin_port        = htons(0); // any port; we'll read it later
+    servaddr.sin_port        = htons(7000); // any port; we'll read it later
     socklen_t servaddrlen = sizeof(servaddr);
 
     if (bind(sockfd, (struct sockaddr *) &servaddr, servaddrlen) == -1) {
