@@ -25,10 +25,13 @@ void rrq(struct sockaddr_in* cliaddr, std::string filename) {
 
     // set up another socket for this transfer
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    // set socket timeout to 1 sec
     struct timeval tv;
     tv.tv_sec = 1;
     tv.tv_usec = 0;
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*) &tv, sizeof(tv));
+
     struct sockaddr_in servaddr;
     memset(&servaddr, 0, sizeof(servaddr));
     servaddr.sin_family      = AF_INET;
@@ -214,7 +217,7 @@ void serve() {
 
 int main(int argc, char** argv) {
     // if we have an argument "log", enable message logging
-    if (argc == 2 && argv[1] == std::string("log")) {
+    if (argc == 2 && argv[1] == std::string("--log")) {
         LOG = true;
     }
     logmsg("logging enabled");
