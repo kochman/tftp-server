@@ -1,13 +1,15 @@
 TFTP server
-==========
+===========
 
 A basic TFTP server, implemented in C++ according to [RFC 1350](https://tools.ietf.org/html/rfc1350).
+
+It picks a random port to listen on and prints it to stdout instead of listening on 69, contrary to the RFC.
 
 Team
 ----
 
-- Rex Hu - hur@rpi.edu
-- Sidney Kochman - kochms@rpi.edu
+- Rex Hu <hur@rpi.edu>
+- Sidney Kochman <kochms@rpi.edu>
 
 Running
 -------
