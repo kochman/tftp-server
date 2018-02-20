@@ -19,6 +19,117 @@ void concatstr(char* first, char* second) {
     }
 }
 
+// handle WRQ
+void wrq(struct sockaddr_in* cliaddr, std::string filename) {
+    logmsg("WRQ client port " + std::to_string(cliaddr->sin_port) + " filename " + filename);
+
+    // set up another socket for this transfer
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    // set socket timeout to 1 sec
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*) &tv, sizeof(tv));
+
+    struct sockaddr_in servaddr;
+    memset(&servaddr, 0, sizeof(servaddr));
+    servaddr.sin_family      = AF_INET;
+    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    servaddr.sin_port        = htons(0); // any port; we'll read it later
+    socklen_t servaddrlen = sizeof(servaddr);
+    if (bind(sockfd, (struct sockaddr *) &servaddr, servaddrlen) == -1) {
+        perror("bind");
+        exit(EXIT_FAILURE);
+    }
+
+    socklen_t cliaddrlen = sizeof(*cliaddr);
+
+    // https://stackoverflow.com/a/4047837
+    if (getsockname(sockfd, (struct sockaddr *)&servaddr, &servaddrlen) == -1) {
+        perror("getsockname");
+        exit(EXIT_FAILURE);
+    }
+
+    // try to open the file
+    FILE* file = fopen(filename.c_str(), "wx");
+    if (file == NULL) {
+        // reply with error if exists
+        logmsg("file already exists");
+        // char msg[128];
+        char msg[32] = { '\0' };
+        msg[0] = 0; // ERROR opcode
+        msg[1] = 5;
+        msg[2] = 0; // File not found error value
+        msg[3] = 6;
+
+        char humanmsg[] = "File already exists.";
+        concatstr(&(msg[4]), humanmsg);
+
+        int sendn = sendto(sockfd, &msg, 4 + strlen(humanmsg) + 1, 0, (struct sockaddr *) cliaddr, cliaddrlen);
+        if (sendn == -1) {
+            perror("sendto");
+            exit(EXIT_FAILURE);
+        }
+        return;
+    }
+
+    bool done = false;
+    short int blocknum = -1;
+    // start receiving data
+    while (true) {
+	    // create message
+	    ++blocknum;
+	    int msglen = 4; // opcode + block number + bytes read
+	    char msg[msglen];
+
+	    msg[0] = 0; // ACK opcode
+	    msg[1] = 4; // ACK opcode
+	    msg[2] = blocknum >> 8;
+	    msg[3] = blocknum;
+
+	    // loop until we receive data or time out
+	    char buffer[516];
+	    int recvn;
+	    while (true) {
+		    // send ack
+		    int sendn = sendto(sockfd, &msg, msglen, 0, (struct sockaddr *) cliaddr, cliaddrlen);
+		    if (sendn == -1) {
+			    perror("sendto");
+			    exit(EXIT_FAILURE);
+		    }
+		    if (done) goto done;
+
+		    // wait for data
+receive:
+		    recvn = recvfrom(sockfd, &buffer, 516, 0, (struct sockaddr *) cliaddr, &cliaddrlen);
+		    if (recvn == -1) {
+			    if (errno == EAGAIN) {
+				    goto receive;
+			    }
+			    perror("recvfrom");
+			    exit(EXIT_FAILURE);
+		    }
+
+		    if (recvn < 512) {
+			    // end of file
+			    done = true;
+		    }
+
+		    break;
+	    }
+	    // write data
+	    int bufn = fwrite(&buffer[4], sizeof(char), recvn - 4, file);
+	    if (bufn == -1) {
+		    perror("fwrite");
+		    exit(EXIT_FAILURE);
+	    }
+    }
+done:
+
+    fclose(file);
+}
+
 // handle RRQ
 void rrq(struct sockaddr_in* cliaddr, std::string filename) {
     logmsg("RRQ client port " + std::to_string(cliaddr->sin_port) + " filename " + filename);
@@ -174,7 +285,7 @@ void handlepacket(int sockfd) {
         rrq(&cliaddr, filename);
     } else if (opcode == 2) {
         logmsg("WRQ received");
-        // wrq();
+        wrq(&cliaddr, filename);
     } else {
         logmsg("unexpected opcode " + std::to_string(opcode));
     }
@@ -187,7 +298,7 @@ void serve() {
     servaddr.sin_family      = AF_INET;
     servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
     servaddr.sin_port        = htons(0); // any port; we'll read it later
-    // servaddr.sin_port        = htons(7000); // any port; we'll read it later
+    //servaddr.sin_port        = htons(7000); // for testing
     socklen_t servaddrlen = sizeof(servaddr);
 
     if (bind(sockfd, (struct sockaddr *) &servaddr, servaddrlen) == -1) {
@@ -208,11 +319,6 @@ void serve() {
     while (true) {
         handlepacket(sockfd);
     }
-
-    // socket();
-    // bind();
-    // listen();
-    // accept();
 }
 
 
