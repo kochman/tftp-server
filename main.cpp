@@ -97,11 +97,13 @@ void rrq(struct sockaddr_in* cliaddr, std::string filename) {
 
         // loop until we receive an ack or time out
         while (true) {
+	    usleep(100000);
             int sendn = sendto(sockfd, &msg, msglen, 0, (struct sockaddr *) cliaddr, cliaddrlen);
             if (sendn == -1) {
                 perror("sendto");
                 exit(EXIT_FAILURE);
             }
+
 
             // wait for ack
             char ackbuffer[4];
@@ -185,8 +187,8 @@ void serve() {
     memset(&servaddr, 0, sizeof(servaddr));
     servaddr.sin_family      = AF_INET;
     servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    // servaddr.sin_port        = htons(0); // any port; we'll read it later
-    servaddr.sin_port        = htons(7000); // any port; we'll read it later
+    servaddr.sin_port        = htons(0); // any port; we'll read it later
+    // servaddr.sin_port        = htons(7000); // any port; we'll read it later
     socklen_t servaddrlen = sizeof(servaddr);
 
     if (bind(sockfd, (struct sockaddr *) &servaddr, servaddrlen) == -1) {
