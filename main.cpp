@@ -97,7 +97,6 @@ void rrq(struct sockaddr_in* cliaddr, std::string filename) {
 
         // loop until we receive an ack or time out
         while (true) {
-	    usleep(100000);
             int sendn = sendto(sockfd, &msg, msglen, 0, (struct sockaddr *) cliaddr, cliaddrlen);
             if (sendn == -1) {
                 perror("sendto");
